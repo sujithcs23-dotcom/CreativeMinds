@@ -1,70 +1,89 @@
 import express from 'express';
-import { db } from '../db.js';
+import { dbService } from '../services/dbService.js';
 import { verifyToken, requireRole } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // GET /api/maintenance
-router.get('/', verifyToken, (req, res) => {
-  return res.json({ success: true, data: db.schedules });
+router.get('/', verifyToken, async (req, res) => {
+  try {
+    const schedules = await dbService.getAllSchedules();
+    return res.json({ success: true, data: schedules });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // POST /api/maintenance
-router.post('/', verifyToken, requireRole(['admin', 'staff']), (req, res) => {
-  const { equipmentId, maintenanceType, scheduledDate, priority, assignedTo, notes } = req.body;
-  const targetEq = db.equipment.find(e => e.id === equipmentId);
+router.post('/', verifyToken, requireRole(['admin', 'staff']), async (req, res) => {
+  try {
+    const { equipmentId, maintenanceType, scheduledDate, priority, assignedTo, notes } = req.body;
+    const targetEq = await dbService.getEquipmentById(equipmentId);
 
-  const newSched = {
-    id: `m-${Date.now()}`,
-    equipmentId,
-    equipmentCode: targetEq ? targetEq.equipmentCode : 'EQ-GEN',
-    equipmentName: targetEq ? targetEq.name : 'Unknown Equipment',
-    assignedTo: assignedTo || 'Alex Turner',
-    assignedToId: 'u-2',
-    maintenanceType: maintenanceType || 'Preventive Maintenance',
-    scheduledDate: scheduledDate || new Date().toISOString().split('T')[0],
-    priority: priority || 'Medium',
-    status: 'Upcoming',
-    notes: notes || '',
-    completedAt: null
-  };
+    const newSchedData = {
+      id: `m-${Date.now()}`,
+      equipmentId,
+      equipmentCode: targetEq ? targetEq.equipmentCode : 'EQ-GEN',
+      equipmentName: targetEq ? targetEq.name : 'Unknown Equipment',
+      assignedTo: assignedTo || 'Alex Turner',
+      assignedToId: 'u-2',
+      maintenanceType: maintenanceType || 'Preventive Maintenance',
+      scheduledDate: scheduledDate || new Date().toISOString().split('T')[0],
+      priority: priority || 'Medium',
+      status: 'Upcoming',
+      notes: notes || '',
+      completedAt: null
+    };
 
-  db.schedules.unshift(newSched);
+    const newSched = await dbService.createSchedule(newSchedData);
 
-  db.notifications.unshift({
-    id: `notif-${Date.now()}`,
-    userId: 'u-2',
-    role: 'staff',
-    title: 'New Task Assigned',
-    message: `You have been assigned maintenance on ${newSched.equipmentName}.`,
-    type: 'warning',
-    isRead: false,
-    createdAt: new Date().toISOString()
-  });
+    await dbService.createNotification({
+      id: `notif-${Date.now()}`,
+      userId: 'u-2',
+      role: 'staff',
+      title: 'New Task Assigned',
+      message: `You have been assigned maintenance on ${newSched.equipmentName}.`,
+      type: 'warning',
+      isRead: false,
+      createdAt: new Date().toISOString()
+    });
 
-  return res.status(201).json({ success: true, data: newSched });
+    return res.status(201).json({ success: true, data: newSched });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // PUT /api/maintenance/:id
-router.put('/:id', verifyToken, (req, res) => {
-  const sched = db.schedules.find(s => s.id === req.params.id);
-  if (!sched) return res.status(404).json({ success: false, message: 'Maintenance task not found' });
+router.put('/:id', verifyToken, async (req, res) => {
+  try {
+    const { status, notes } = req.body;
+    const updateData = {};
+    if (status) updateData.status = status;
+    if (notes) updateData.notes = notes;
 
-  const { status, notes } = req.body;
-  if (status) sched.status = status;
-  if (notes) sched.notes = notes;
-
-  if (status === 'Completed') {
-    sched.completedAt = new Date().toISOString();
-    // Update equipment status
-    const eq = db.equipment.find(e => e.id === sched.equipmentId);
-    if (eq) {
-      eq.status = 'Operational';
-      eq.lastMaintenanceDate = new Date().toISOString().split('T')[0];
+    if (status === 'Completed') {
+      updateData.completedAt = new Date().toISOString();
     }
-  }
 
-  return res.json({ success: true, data: sched });
+    const updatedSched = await dbService.updateSchedule(req.params.id, updateData);
+    if (!updatedSched) return res.status(404).json({ success: false, message: 'Maintenance task not found' });
+
+    if (status === 'Completed') {
+      // Update equipment status
+      const eq = await dbService.getEquipmentById(updatedSched.equipmentId);
+      if (eq) {
+        await dbService.updateEquipment(eq.id, {
+          status: 'Operational',
+          lastMaintenanceDate: new Date().toISOString().split('T')[0]
+        });
+      }
+    }
+
+    return res.json({ success: true, data: updatedSched });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 export default router;

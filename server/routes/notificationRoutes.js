@@ -1,21 +1,28 @@
 import express from 'express';
-import { db } from '../db.js';
+import { dbService } from '../services/dbService.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // GET /api/notifications
-router.get('/', verifyToken, (req, res) => {
-  return res.json({ success: true, data: db.notifications });
+router.get('/', verifyToken, async (req, res) => {
+  try {
+    const notifications = await dbService.getAllNotifications();
+    return res.json({ success: true, data: notifications });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // PUT /api/notifications/:id/read
-router.put('/:id/read', verifyToken, (req, res) => {
-  const notif = db.notifications.find(n => n.id === req.params.id);
-  if (!notif) return res.status(404).json({ success: false, message: 'Notification not found' });
-
-  notif.isRead = true;
-  return res.json({ success: true, data: notif });
+router.put('/:id/read', verifyToken, async (req, res) => {
+  try {
+    const notif = await dbService.markNotificationRead(req.params.id);
+    if (!notif) return res.status(404).json({ success: false, message: 'Notification not found' });
+    return res.json({ success: true, data: notif });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 export default router;
